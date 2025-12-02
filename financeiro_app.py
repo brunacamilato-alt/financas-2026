@@ -1,334 +1,405 @@
+# financeiro_app.py
+# Dashboard Financeiro Pessoal 2026 – Bruna & Juliana
+
 import pandas as pd
 import streamlit as st
+import altair as alt
 
-# ---------------------------------------------------------
-# CONFIGURAÇÃO BÁSICA
-# ---------------------------------------------------------
-st.set_page_config(
-    page_title="Financeiro Pessoal 2026",
-    layout="wide"
-)
+# --------------------------------------------------------------------
+# CONFIGURAÇÕES GERAIS
+# --------------------------------------------------------------------
 
-# URL da planilha publicada em CSV (base de dados do app)
+# URL do CSV publicado (Arquivo > Publicar na Web > CSV)
 CSV_URL = (
     "https://docs.google.com/spreadsheets/d/e/"
     "2PACX-1vQdunAx32Ot89eu2zi2Pl5b2xt0N7fSX_goIrgNdRlqTuaNy3BDBB8QJMgmTCSdL_UIbxggagH8_Q6F/"
     "pub?gid=0&single=true&output=csv"
 )
 
-# URL para abrir a planilha (troque pelo link de edição se quiser)
+# URL da planilha para edição (normal, no Google Sheets)
 SHEET_URL = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vQdunAx32Ot89eu2zi2Pl5b2xt0N7fSX_goIrgNdRlqTuaNy3BDBB8QJMgmTCSdL_UIbxggagH8_Q6F/"
-    "pub?gid=0&single=true&output=html"
+    "https://docs.google.com/spreadsheets/d/1qVcPQgOEx3hbc5bIb1I-b-D_1hmFHP1Ny6MSLdOYxrA"
+    "/edit?usp=sharing"
 )
 
-# Colunas fixas de identificação
-ID_COLS = ["Natureza", "Categoria", "Tipo", "Descrição", "Pagador"]
-
-# Mapa de meses abreviados -> número
-MONTH_MAP = {
-    "Jan": 1, "Fev": 2, "Mar": 3, "Abr": 4,
-    "Mai": 5, "Jun": 6, "Jul": 7, "Ago": 8,
-    "Set": 9, "Out": 10, "Nov": 11, "Dez": 12
-}
-
-ANO_ALVO = 2026
+# Ordem correta dos meses
+MONTH_ORDER = [
+    "Jan/26", "Fev/26", "Mar/26", "Abr/26",
+    "Mai/26", "Jun/26", "Jul/26", "Ago/26",
+    "Set/26", "Out/26", "Nov/26", "Dez/26",
+]
 
 
-# ---------------------------------------------------------
-# CARREGAMENTO E TRANSFORMAÇÃO
-# ---------------------------------------------------------
+# --------------------------------------------------------------------
+# FUNÇÕES AUXILIARES
+# --------------------------------------------------------------------
+
+def limpa_moeda(valor):
+    """Converte 'R$ 2.599,67' (ou similar) em float."""
+    if pd.isna(valor):
+        return 0.0
+    if isinstance(valor, (int, float)):
+        return float(valor)
+
+    s = str(valor).strip()
+    s = s.replace("R$", "").replace(" ", "")
+    s = s.replace(".", "").replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def fmt_br(v: float) -> str:
+    """Formata número como moeda BR."""
+    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante que colunas principais existam com nomes padronizados."""
+    renomear = {}
+    for col in df.columns:
+        low = str(col).strip().lower()
+        if low.startswith("nature"):
+            renomear[col] = "Natureza"
+        elif low.startswith("categ"):
+            renomear[col] = "Categoria"
+        elif low.startswith("tipo"):
+            renomear[col] = "Tipo"
+        elif low.startswith("descr"):
+            renomear[col] = "Descrição"
+        elif low.startswith("pagador"):
+            renomear[col] = "Pagador"
+
+    df = df.rename(columns=renomear)
+
+    for col in ["Natureza", "Categoria", "Tipo", "Descrição", "Pagador"]:
+        if col not in df.columns:
+            df[col] = None
+
+    return df
+
+
+# --------------------------------------------------------------------
+# CARREGAMENTO E TRANSFORMAÇÃO DOS DADOS
+# --------------------------------------------------------------------
+
 @st.cache_data
 def carregar_dados_long() -> pd.DataFrame:
-    """
-    Lê a planilha pivotada (Prev./Real.) e transforma em formato longo:
-
-    Natureza | Categoria | Tipo | Descrição | Pagador |
-    Ano | MesNum | Mes | Cenario (Plan/Real) | Valor
-    """
+    """Lê o CSV publicado e transforma em formato longo (uma linha por mês)."""
     df = pd.read_csv(CSV_URL)
 
-    df.columns = [str(c).strip() for c in df.columns]
-    df = df.dropna(how="all")
-    if "Natureza" in df.columns:
-        df = df.dropna(subset=["Natureza"])
+    df = normalizar_colunas(df)
 
-    for col in ID_COLS:
-        if col not in df.columns:
-            df[col] = ""
+    # descobre colunas de Prev e Real
+    col_prev = [c for c in df.columns if isinstance(c, str) and "prev" in c.lower()]
+    col_real = [c for c in df.columns if isinstance(c, str) and "real" in c.lower()]
 
-    value_cols = [c for c in df.columns if c not in ID_COLS]
+    def extrair_mes(nome: str) -> str:
+        nome = nome.replace("Prev.", "").replace("Prev", "")
+        nome = nome.replace("Real.", "").replace("Real", "")
+        return nome.strip()
 
-    linhas = []
+    meses = []
+    for cp in col_prev:
+        mes = extrair_mes(cp)
+        cand = [c for c in col_real if extrair_mes(c) == mes]
+        cr = cand[0] if cand else None
+        meses.append((mes, cp, cr))
 
-    for col in value_cols:
-        if not isinstance(col, str):
-            continue
-        if "/" not in col or ("Prev" not in col and "Real" not in col):
-            continue
+    registros = []
+    for _, linha in df.iterrows():
+        for mes, cp, cr in meses:
+            registros.append(
+                {
+                    "Natureza": linha["Natureza"],
+                    "Categoria": linha["Categoria"],
+                    "Tipo": linha["Tipo"],
+                    "Descrição": linha["Descrição"],
+                    "Pagador": linha["Pagador"],
+                    "MesRef": mes,
+                    "Prev": limpa_moeda(linha.get(cp, 0)),
+                    "Real": limpa_moeda(linha.get(cr, 0)),
+                }
+            )
 
-        try:
-            mes_ano_part, scen_label = col.split(" ", 1)
-            mes_abbr, ano_suf = mes_ano_part.split("/")
-        except ValueError:
-            continue
+    df_longo = pd.DataFrame(registros)
 
-        mes_abbr = mes_abbr.strip()
-        ano_suf = ano_suf.strip()
+    # Ordena meses
+    df_longo["MesOrd"] = df_longo["MesRef"].apply(
+        lambda x: MONTH_ORDER.index(x) if x in MONTH_ORDER else 99
+    )
+    df_longo = df_longo.sort_values("MesOrd").drop(columns=["MesOrd"])
 
-        ano = 2000 + int(ano_suf)
-        mes_num = MONTH_MAP.get(mes_abbr, 0)
-        cenario = "Plan" if "Prev" in scen_label else "Real"
-
-        sub = df[ID_COLS + [col]].copy()
-        sub = sub.rename(columns={col: "Valor"})
-        sub["Ano"] = ano
-        sub["MesNum"] = mes_num
-        sub["Mes"] = mes_ano_part
-        sub["Cenario"] = cenario
-
-        linhas.append(sub)
-
-    df_long = pd.concat(linhas, ignore_index=True)
-
-    df_long["Natureza"] = df_long["Natureza"].astype(str).str.strip()
-    df_long["Categoria"] = df_long["Categoria"].astype(str).str.strip()
-    df_long["Pagador"] = df_long["Pagador"].astype(str).str.strip()
-    df_long["Valor"] = pd.to_numeric(df_long["Valor"], errors="coerce").fillna(0)
-
-    return df_long
+    return df_longo
 
 
-def tabela_mensal(df_long: pd.DataFrame, ano: int, natureza: str) -> pd.DataFrame:
-    """
-    MesNum | Mes | Plan | Real
-    """
-    df_ano = df_long[(df_long["Ano"] == ano) &
-                     (df_long["Natureza"] == natureza)]
+def montar_resumo(df_longo: pd.DataFrame,
+                  pagadores: list,
+                  categorias: list) -> pd.DataFrame:
+    """Resumo mensal (custos, entradas, saldo)."""
+    base = df_longo.copy()
 
-    if df_ano.empty:
-        return pd.DataFrame(columns=["MesNum", "Mes", "Plan", "Real"])
+    if pagadores:
+        base = base[base["Pagador"].isin(pagadores)]
 
-    grp = (
-        df_ano
-        .groupby(["MesNum", "Mes", "Cenario"], as_index=False)["Valor"]
+    if categorias:
+        base = base[base["Categoria"].isin(categorias)]
+
+    # Define custos (Natureza = 'Custo') e entradas (todo o resto)
+    natureza_series = base["Natureza"].fillna("").str.lower()
+    custos_base = base[natureza_series == "custo"]
+    entradas_base = base[natureza_series != "custo"]
+
+    # Custos
+    custos = (
+        custos_base
+        .groupby("MesRef")[["Prev", "Real"]]
         .sum()
+        .rename(columns={"Prev": "Custos_Prev", "Real": "Custos_Real"})
     )
 
-    pivot = grp.pivot(index=["MesNum", "Mes"],
-                      columns="Cenario",
-                      values="Valor").fillna(0)
+    # Entradas: receitas, saldo inicial, etc (tudo que não é custo)
+    entradas = (
+        entradas_base
+        .groupby("MesRef")[["Prev", "Real"]]
+        .sum()
+        .rename(columns={"Prev": "Receb_Prev", "Real": "Receb_Real"})
+    )
 
-    for col in ["Plan", "Real"]:
-        if col not in pivot.columns:
-            pivot[col] = 0
+    resumo = custos.join(entradas, how="outer").fillna(0.0)
 
-    pivot = pivot.reset_index().sort_values("MesNum")
-    return pivot[["MesNum", "Mes", "Plan", "Real"]]
+    resumo["Saldo_Prev"] = resumo["Receb_Prev"] - resumo["Custos_Prev"]
+    resumo["Saldo_Real"] = resumo["Receb_Real"] - resumo["Custos_Real"]
 
+    resumo["Var_Saldo_%"] = resumo.apply(
+        lambda r: (r["Saldo_Real"] / r["Saldo_Prev"] - 1) if r["Saldo_Prev"] else 0.0,
+        axis=1,
+    )
 
-def tabela_saldo_mensal(df_long: pd.DataFrame, ano: int) -> pd.DataFrame:
-    """
-    Saldo = Receita - Custo + Saldo Inicial (Plan e Real)
-    """
-    rec = tabela_mensal(df_long, ano, "Receita")
-    cus = tabela_mensal(df_long, ano, "Custo")
-    sal = tabela_mensal(df_long, ano, "Saldo Inicial")
+    resumo = resumo.reset_index()
+    resumo["MesOrd"] = resumo["MesRef"].apply(
+        lambda x: MONTH_ORDER.index(x) if x in MONTH_ORDER else 99
+    )
+    resumo = resumo.sort_values("MesOrd").drop(columns=["MesOrd"])
 
-    def renomear(df, prefixo):
-        if df.empty:
-            return pd.DataFrame(columns=["MesNum", "Mes", f"{prefixo}_Plan", f"{prefixo}_Real"])
-        return df[["MesNum", "Mes", "Plan", "Real"]].rename(
-            columns={"Plan": f"{prefixo}_Plan", "Real": f"{prefixo}_Real"}
-        )
-
-    rec2 = renomear(rec, "Rec")
-    cus2 = renomear(cus, "Cus")
-    sal2 = renomear(sal, "Ini")
-
-    base = pd.merge(rec2, cus2, on=["MesNum", "Mes"], how="outer")
-    base = pd.merge(base, sal2, on=["MesNum", "Mes"], how="outer").fillna(0)
-
-    base["Saldo_Plan"] = base["Rec_Plan"] - base["Cus_Plan"] + base["Ini_Plan"]
-    base["Saldo_Real"] = base["Rec_Real"] - base["Cus_Real"] + base["Ini_Real"]
-
-    base = base.sort_values("MesNum")
-    return base[["MesNum", "Mes", "Saldo_Plan", "Saldo_Real"]]
+    return resumo
 
 
-# ---------------------------------------------------------
-# APP
-# ---------------------------------------------------------
+# --------------------------------------------------------------------
+# INTERFACE STREAMLIT
+# --------------------------------------------------------------------
+
 def main():
+    st.set_page_config(
+        page_title="Financeiro Pessoal 2026 – Visão Simplificada",
+        layout="wide",
+    )
+
     st.title("Financeiro Pessoal 2026 – Visão Simplificada")
 
-    df_long_original = carregar_dados_long()
+    # Cabeçalho: link da planilha + botão de atualização
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.caption("Fonte de dados: Google Sheets (publicado em CSV).")
+        st.markdown(f"[Abrir planilha para edição]({SHEET_URL})")
+
+    with col2:
+        if st.button("Atualizar dados agora"):
+            carregar_dados_long.clear()
+            st.experimental_rerun()
+
+    # Carrega dados
+    df_long = carregar_dados_long()
 
     with st.expander("Ver amostra dos dados transformados"):
-        st.write(df_long_original.head())
+        st.write(df_long.head())
 
-    # ---------------------------------------------
-    # FILTROS SIMPLES
-    # ---------------------------------------------
-    df_long = df_long_original.copy()
+    # ----------------------------------------------------------------
+    # FILTROS
+    # ----------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("Filtros")
 
-    st.markdown("#### Filtros")
-
-    # Pagador
-    pagadores = sorted(df_long["Pagador"].dropna().unique().tolist())
-    sel_pagadores = st.multiselect(
+    pagadores_disponiveis = sorted(df_long["Pagador"].dropna().unique())
+    pagadores_sel = st.multiselect(
         "Pagador:",
-        options=pagadores,
-        default=pagadores
+        options=pagadores_disponiveis,
+        default=pagadores_disponiveis,
     )
-    if sel_pagadores:
-        df_long = df_long[df_long["Pagador"].isin(sel_pagadores)]
 
-    # Categoria opcional
-    with st.expander("Filtrar por categoria (opcional)", expanded=False):
-        categorias = sorted(df_long["Categoria"].dropna().unique().tolist())
-        sel_categorias = st.multiselect(
-            "Categoria:",
-            options=categorias,
-            default=categorias
-        )
-        if sel_categorias:
-            df_long = df_long[df_long["Categoria"].isin(sel_categorias)]
+    categorias_disponiveis = sorted(df_long["Categoria"].dropna().unique())
+    categorias_sel = st.multiselect(
+        "Filtrar por categoria (opcional):",
+        options=categorias_disponiveis,
+        default=[],
+    )
 
+    visao = st.radio(
+        "Visão de valores:",
+        ["Plan & Real", "Planejado", "Realizado"],
+        horizontal=True,
+    )
+
+    resumo = montar_resumo(df_long, pagadores_sel, categorias_sel)
+
+    if resumo.empty:
+        st.warning("Nenhum dado encontrado para os filtros selecionados.")
+        return
+
+    # ----------------------------------------------------------------
+    # RESUMO ANUAL (KPIs)
+    # ----------------------------------------------------------------
     st.markdown("---")
+    st.subheader("Resumo anual (após filtros)")
 
-    # ---------------------------------------------
-    # TABELA ANUAL SIMPLES
-    # ---------------------------------------------
-    st.markdown("### Tabela anual – mês a mês (Plan x Real)")
+    # Totais
+    total_c_prev = resumo["Custos_Prev"].sum()
+    total_c_real = resumo["Custos_Real"].sum()
+    total_r_prev = resumo["Receb_Prev"].sum()
+    total_r_real = resumo["Receb_Real"].sum()
+    total_s_prev = resumo["Saldo_Prev"].sum()
+    total_s_real = resumo["Saldo_Real"].sum()
 
-    rec = tabela_mensal(df_long, ANO_ALVO, "Receita")
-    cus = tabela_mensal(df_long, ANO_ALVO, "Custo")
-    sal = tabela_saldo_mensal(df_long, ANO_ALVO)
+    col_a, col_b, col_c = st.columns(3)
 
-    rec = rec.rename(columns={"Plan": "Receita_Plan", "Real": "Receita_Real"})
-    cus = cus.rename(columns={"Plan": "Custo_Plan", "Real": "Custo_Real"})
-    sal = sal.rename(columns={"Saldo_Plan": "Saldo_Plan", "Saldo_Real": "Saldo_Real"})
+    if visao == "Planejado":
+        # Usa apenas Prev
+        col_a.metric("Gastos – Previsto (Ano)", fmt_br(total_c_prev))
+        col_b.metric("Entradas – Previstas (Ano)", fmt_br(total_r_prev))
+        col_c.metric("Saldo – Previsto (Ano)", fmt_br(total_s_prev))
 
-    df_mes = pd.merge(rec, cus, on=["MesNum", "Mes"], how="outer")
-    df_mes = pd.merge(df_mes, sal, on=["MesNum", "Mes"], how="outer").fillna(0)
+    elif visao == "Realizado":
+        # Usa apenas Real
+        col_a.metric("Gastos – Real (Ano)", fmt_br(total_c_real))
+        col_b.metric("Entradas – Reais (Ano)", fmt_br(total_r_real))
+        col_c.metric("Saldo – Real (Ano)", fmt_br(total_s_real))
 
-    df_mes = df_mes.sort_values("MesNum")[[
-        "Mes",
-        "Receita_Plan", "Receita_Real",
-        "Custo_Plan", "Custo_Real",
-        "Saldo_Plan", "Saldo_Real"
-    ]]
-
-    if not df_mes.empty:
-
-        def color_row(row):
-            styles = []
-            for col in row.index:
-                color = ""
-
-                # COLORIR APENAS SALDO PLAN E SALDO REAL
-                if col in ["Saldo_Plan", "Saldo_Real"]:
-                    v = row[col]
-                    if v < 0:
-                        color = "#ffd6d6"   # vermelho pastel
-                    elif v < 2000:
-                        color = "#fff7bf"  # amarelo pastel
-                    else:
-                        color = "#d6f5d6"  # verde pastel
-
-                styles.append(f"background-color: {color}" if color else "")
-            return styles
-
-        styled = (
-            df_mes.style
-            .apply(color_row, axis=1)
-            .format({
-                "Receita_Plan": "{:,.2f}",
-                "Receita_Real": "{:,.2f}",
-                "Custo_Plan": "{:,.2f}",
-                "Custo_Real": "{:,.2f}",
-                "Saldo_Plan": "{:,.2f}",
-                "Saldo_Real": "{:,.2f}",
-            })
-        )
-
-        st.dataframe(styled, use_container_width=True)
     else:
-        st.info("Não há dados para os filtros selecionados.")
-
-    # ---------------------------------------------
-    # RESUMO ANUAL – PLAN E REAL
-    # ---------------------------------------------
-    st.markdown("---")
-    st.markdown("### Resumo anual (Plan x Real)")
-
-    if not df_mes.empty:
-        total_rec_plan = df_mes["Receita_Plan"].sum()
-        total_cus_plan = df_mes["Custo_Plan"].sum()
-        total_sal_plan = df_mes["Saldo_Plan"].sum()
-
-        total_rec_real = df_mes["Receita_Real"].sum()
-        total_cus_real = df_mes["Custo_Real"].sum()
-        total_sal_real = df_mes["Saldo_Real"].sum()
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Receita total (Plan)", f"{total_rec_plan:,.2f}")
-        with c2:
-            st.metric("Custo total (Plan)", f"{total_cus_plan:,.2f}")
-        with c3:
-            st.metric("Saldo acumulado (Plan)", f"{total_sal_plan:,.2f}")
-
-        c4, c5, c6 = st.columns(3)
-        with c4:
-            st.metric("Receita total (Real)", f"{total_rec_real:,.2f}")
-        with c5:
-            st.metric("Custo total (Real)", f"{total_cus_real:,.2f}")
-        with c6:
-            st.metric("Saldo acumulado (Real)", f"{total_sal_real:,.2f}")
-    else:
-        st.info("Resumo anual indisponível (sem dados para os filtros).")
-
-    # ---------------------------------------------
-    # DETALHE DE UM MÊS (Plan ou Real)
-    # ---------------------------------------------
-    st.markdown("---")
-    st.markdown("### Detalhe de um mês")
-
-    meses_disp = df_mes["Mes"].tolist()
-    if meses_disp:
-        col_mes, col_cen = st.columns(2)
-        with col_mes:
-            mes_sel = st.selectbox("Escolha o mês:", meses_disp)
-        with col_cen:
-            cen_sel = st.selectbox("Cenário:", ["Real", "Plan"])
-
-        df_det = df_long[
-            (df_long["Ano"] == ANO_ALVO) &
-            (df_long["Mes"] == mes_sel) &
-            (df_long["Cenario"] == cen_sel)
-        ].copy()
-
-        st.markdown(
-            f"[Abrir planilha no Google Sheets para editar valores]({SHEET_URL})"
+        # Plan & Real: mostra Real com delta vs Prev
+        delta_c = total_c_real - total_c_prev
+        delta_r = total_r_real - total_r_prev
+        delta_s = (
+            (total_s_real / total_s_prev - 1) * 100 if total_s_prev else 0.0
         )
 
-        if not df_det.empty:
-            df_det = df_det[
-                ["Natureza", "Categoria", "Tipo", "Descrição", "Pagador", "Valor"]
-            ].sort_values(["Natureza", "Categoria", "Descrição"])
+        col_a.metric(
+            "Gastos – Real (Ano)",
+            fmt_br(total_c_real),
+            delta=f"{fmt_br(delta_c)} vs Prev.",
+        )
+        col_b.metric(
+            "Entradas – Reais (Ano)",
+            fmt_br(total_r_real),
+            delta=f"{fmt_br(delta_r)} vs Prev.",
+        )
+        col_c.metric(
+            "Saldo – Real (Ano)",
+            fmt_br(total_s_real),
+            delta=f"{delta_s:.1f}% vs Prev.",
+        )
 
-            st.dataframe(
-                df_det.style.format({"Valor": "{:,.2f}"}),
-                use_container_width=True
+    # ----------------------------------------------------------------
+    # TABELA RESUMO MENSAL
+    # ----------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("Resumo mensal")
+
+    tabela = resumo.copy()
+
+    # Decide quais colunas exibir conforme a visão
+    if visao == "Planejado":
+        cols = ["MesRef", "Custos_Prev", "Receb_Prev", "Saldo_Prev"]
+    elif visao == "Realizado":
+        cols = ["MesRef", "Custos_Real", "Receb_Real", "Saldo_Real"]
+    else:
+        cols = [
+            "MesRef",
+            "Custos_Prev", "Custos_Real",
+            "Receb_Prev", "Receb_Real",
+            "Saldo_Prev", "Saldo_Real",
+            "Var_Saldo_%",
+        ]
+
+    # Formatação
+    for c in ["Custos_Prev", "Custos_Real", "Receb_Prev", "Receb_Real", "Saldo_Prev", "Saldo_Real"]:
+        if c in tabela.columns:
+            tabela[c] = tabela[c].map(fmt_br)
+
+    if "Var_Saldo_%" in tabela.columns:
+        tabela["Var_Saldo_%"] = tabela["Var_Saldo_%"].map(
+            lambda v: f"{v*100:.1f}%".replace(".", ",")
+        )
+
+    st.dataframe(tabela[cols], use_container_width=True, height=360)
+
+    # ----------------------------------------------------------------
+    # GRÁFICO DE SALDO (PREV x REAL)
+    # ----------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("Evolução do saldo")
+
+    chart_data = resumo.copy()
+
+    if visao == "Planejado":
+        # Só saldo previsto
+        chart = (
+            alt.Chart(chart_data)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("MesRef:N", sort=MONTH_ORDER, title="Mês"),
+                y=alt.Y("Saldo_Prev:Q", title="Saldo"),
+                color=alt.value("#7da0ff"),
+                tooltip=["MesRef", "Saldo_Prev"],
             )
-        else:
-            st.info(f"Ainda não há valores de **{cen_sel}** para {mes_sel}.")
+            .properties(height=320)
+        )
+
+    elif visao == "Realizado":
+        # Só saldo real
+        chart = (
+            alt.Chart(chart_data)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("MesRef:N", sort=MONTH_ORDER, title="Mês"),
+                y=alt.Y("Saldo_Real:Q", title="Saldo"),
+                color=alt.value("#1f77b4"),
+                tooltip=["MesRef", "Saldo_Real"],
+            )
+            .properties(height=320)
+        )
+
     else:
-        st.info("Tabela anual vazia para os filtros atuais.")
+        # Plan & Real: duas linhas sobrepostas (sem transform_fold, para evitar erro)
+        line_prev = (
+            alt.Chart(chart_data)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("MesRef:N", sort=MONTH_ORDER, title="Mês"),
+                y=alt.Y("Saldo_Prev:Q", title="Saldo"),
+                color=alt.value("#7da0ff"),
+                tooltip=["MesRef", "Saldo_Prev"],
+            )
+        )
+
+        line_real = (
+            alt.Chart(chart_data)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("MesRef:N", sort=MONTH_ORDER, title="Mês"),
+                y=alt.Y("Saldo_Real:Q", title="Saldo"),
+                color=alt.value("#1f77b4"),
+                tooltip=["MesRef", "Saldo_Real"],
+            )
+        )
+
+        chart = (line_prev + line_real).properties(height=320)
+
+    st.altair_chart(chart, use_container_width=True)
 
 
+# --------------------------------------------------------------------
+# ENTRYPOINT
+# --------------------------------------------------------------------
 if __name__ == "__main__":
     main()
