@@ -257,9 +257,15 @@ def main():
     # Aplica filtros básicos sobre df_long
     df_base = df_long.copy()
 
+    # Normaliza pagador para evitar problemas de espaço/letra maiúscula
+    pag_series = df_base["Pagador"].fillna("").str.strip().str.lower()
+
     if pagador != "Ambas":
-        pag_series = df_base["Pagador"].fillna("").str.strip().str.lower()
-        df_base = df_base[pag_series == pagador.lower()]
+        if pagador == "Bruna":
+            mask_pag = pag_series.str.contains("bruna")
+        else:
+            mask_pag = pag_series.str.contains("juliana")
+        df_base = df_base[mask_pag]
 
     natureza_series_base = df_base["Natureza"].fillna("").str.lower()
     if cat_choice == "Itens de Receitas e Saldos":
@@ -316,14 +322,14 @@ def main():
     total_s_real = resumo["Saldo_Real"].sum()
 
     # Linha Planejado
-    if visao in ("Planejado", "Ambos"):
+    if visao_rank in ("Planejado", "Ambos"):
         col_p1, col_p2, col_p3 = st.columns(3)
         col_p1.metric("Gastos – Previsto (Ano)", fmt_br(total_c_prev))
         col_p2.metric("Entradas – Previstas (Ano)", fmt_br(total_r_prev))
         col_p3.metric("Saldo – Previsto (Ano)", fmt_br(total_s_prev))
 
     # Linha Realizado
-    if visao in ("Realizado", "Ambos"):
+    if visao_rank in ("Realizado", "Ambos"):
         col_r1, col_r2, col_r3 = st.columns(3)
 
         if visao == "Ambos":
@@ -418,7 +424,8 @@ def main():
     # ----------------------------------------------------------------
     st.subheader("Ranking de custos por categoria (evolução no tempo)")
 
-    visao = st.radio(
+    # Visão de valores específica do ranking (independente do resumo)
+    visao_rank = st.radio(
         "Visão de valores (ranking):",
         ["Planejado", "Realizado", "Ambos"],
         index=0,
@@ -455,7 +462,7 @@ def main():
     )
 
     # Zera Prev nos meses passados (Planejado e Ambos)
-    if visao in ("Planejado", "Ambos"):
+    if visao_rank in ("Planejado", "Ambos"):
         agr.loc[agr["MesPassado"], "Prev"] = 0.0
 
     # Garante ordem dos meses
@@ -471,9 +478,9 @@ def main():
             prev_val = float(rec["Prev"].iloc[0]) if not rec.empty else 0.0
             real_val = float(rec["Real"].iloc[0]) if not rec.empty else 0.0
 
-            if visao in ("Planejado", "Ambos"):
+            if visao_rank in ("Planejado", "Ambos"):
                 linha[f"{mes} Prev"] = prev_val
-            if visao in ("Realizado", "Ambos"):
+            if visao_rank in ("Realizado", "Ambos"):
                 linha[f"{mes} Real"] = real_val
 
         # totais para ordenação
@@ -490,7 +497,7 @@ def main():
 
     df_rank = pd.DataFrame(linhas)
 
-    if visao in ("Realizado", "Ambos"):
+    if visao_rank in ("Realizado", "Ambos"):
         df_rank = df_rank.sort_values("_total_real", ascending=False)
     else:  # Planejado
         df_rank = df_rank.sort_values("_total_prev", ascending=False)
