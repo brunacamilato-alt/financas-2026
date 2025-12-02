@@ -267,7 +267,7 @@ def main():
             mask_pag = pag_series.str.contains("juliana")
         df_base = df_base[mask_pag]
 
-    natureza_series_base = df_base["Natureza"].fillna("").str.lower()
+    natureza_series_base = df_base["Natureza"].fillna("").str.strip().str.lower()
     if cat_choice == "Itens de Receitas e Saldos":
         df_base = df_base[natureza_series_base != "custo"]
     elif cat_choice == "Itens de Custos":
@@ -322,14 +322,14 @@ def main():
     total_s_real = resumo["Saldo_Real"].sum()
 
     # Linha Planejado
-    if visao_rank in ("Planejado", "Ambos"):
+    if visao in ("Planejado", "Ambos"):
         col_p1, col_p2, col_p3 = st.columns(3)
         col_p1.metric("Gastos – Previsto (Ano)", fmt_br(total_c_prev))
         col_p2.metric("Entradas – Previstas (Ano)", fmt_br(total_r_prev))
         col_p3.metric("Saldo – Previsto (Ano)", fmt_br(total_s_prev))
 
     # Linha Realizado
-    if visao_rank in ("Realizado", "Ambos"):
+    if visao in ("Realizado", "Ambos"):
         col_r1, col_r2, col_r3 = st.columns(3)
 
         if visao == "Ambos":
@@ -377,9 +377,8 @@ def main():
     else:  # Ambos
         cols = [
             "MesRef",
-            "Custos_Prev", "Custos_Real",
-            "Receb_Prev", "Receb_Real",
-            "Saldo_Prev", "Saldo_Real",
+            "Custos_Prev", "Receb_Prev", "Saldo_Prev",
+            "Custos_Real", "Receb_Real", "Saldo_Real",
             "Var_Saldo_%",
         ]
 
@@ -398,6 +397,11 @@ def main():
             return "background-color: #fff7cc;"   # amarelo
 
     tabela_exib = tabela[cols].copy()
+    # Arredonda colunas monetárias para 2 casas decimais
+    cols_moeda = [c for c in cols if c.startswith(("Custos_", "Receb_", "Saldo_"))]
+    for c in cols_moeda:
+        if c in tabela_exib.columns:
+            tabela_exib[c] = pd.to_numeric(tabela_exib[c], errors="coerce").fillna(0).round(2)
 
     styler = tabela_exib.style
 
@@ -417,7 +421,7 @@ def main():
     if saldo_cols:
         styler = styler.applymap(color_saldo, subset=saldo_cols)
 
-    st.dataframe(styler, use_container_width=True, height=360)
+    st.dataframe(styler, use_container_width=True, height=700)
 
     # ----------------------------------------------------------------
     # RANKING DE CUSTOS (EVOLUÇÃO NO TEMPO) – após Resumo Mensal
@@ -434,7 +438,7 @@ def main():
     )
 
     base_rank = df_base.copy()
-    natureza_rank = base_rank["Natureza"].fillna("").str.lower()
+    natureza_rank = base_rank["Natureza"].fillna("").str.strip().str.lower()
     base_rank = base_rank[natureza_rank == "custo"]
 
     if base_rank.empty:
@@ -504,8 +508,12 @@ def main():
 
     df_rank = df_rank.drop(columns=["_total_real", "_total_prev"], errors="ignore")
 
-    # Formatação do ranking
+    # Arredonda colunas numéricas do ranking para 2 casas decimais
     cols_rank = [c for c in df_rank.columns if c != "Categoria"]
+    for c in cols_rank:
+        df_rank[c] = pd.to_numeric(df_rank[c], errors="coerce").fillna(0).round(2)
+
+    # Formatação do ranking
     fmt_rank = {c: fmt_br for c in cols_rank}
     styler_rank = df_rank.style.format(fmt_rank)
 
