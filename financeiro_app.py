@@ -3,7 +3,6 @@
 
 import pandas as pd
 import streamlit as st
-import altair as alt
 
 # --------------------------------------------------------------------
 # CONFIGURAÇÕES GERAIS
@@ -29,10 +28,10 @@ MONTH_ORDER = [
     "Set/26", "Out/26", "Nov/26", "Dez/26",
 ]
 
-
 # --------------------------------------------------------------------
 # FUNÇÕES AUXILIARES
 # --------------------------------------------------------------------
+
 
 def limpa_moeda(valor):
     """Converte 'R$ 2.599,67' (ou similar) em float."""
@@ -83,6 +82,7 @@ def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
 # --------------------------------------------------------------------
 # CARREGAMENTO E TRANSFORMAÇÃO DOS DADOS
 # --------------------------------------------------------------------
+
 
 @st.cache_data
 def carregar_dados_long() -> pd.DataFrame:
@@ -190,6 +190,7 @@ def montar_resumo(df_longo: pd.DataFrame,
 # INTERFACE STREAMLIT
 # --------------------------------------------------------------------
 
+
 def main():
     st.set_page_config(
         page_title="Financeiro Pessoal 2026 – Visão Simplificada",
@@ -206,8 +207,13 @@ def main():
 
     with col2:
         if st.button("Atualizar dados agora"):
+            # limpa o cache da função e força recarregar
             carregar_dados_long.clear()
-            st.experimental_rerun()
+            # compatível com versões novas/antigas
+            if hasattr(st, "rerun"):
+                st.rerun()
+            elif hasattr(st, "experimental_rerun"):
+                st.experimental_rerun()
 
     # Carrega dados
     df_long = carregar_dados_long()
@@ -264,24 +270,19 @@ def main():
     col_a, col_b, col_c = st.columns(3)
 
     if visao == "Planejado":
-        # Usa apenas Prev
         col_a.metric("Gastos – Previsto (Ano)", fmt_br(total_c_prev))
         col_b.metric("Entradas – Previstas (Ano)", fmt_br(total_r_prev))
         col_c.metric("Saldo – Previsto (Ano)", fmt_br(total_s_prev))
 
     elif visao == "Realizado":
-        # Usa apenas Real
         col_a.metric("Gastos – Real (Ano)", fmt_br(total_c_real))
         col_b.metric("Entradas – Reais (Ano)", fmt_br(total_r_real))
         col_c.metric("Saldo – Real (Ano)", fmt_br(total_s_real))
 
     else:
-        # Plan & Real: mostra Real com delta vs Prev
         delta_c = total_c_real - total_c_prev
         delta_r = total_r_real - total_r_prev
-        delta_s = (
-            (total_s_real / total_s_prev - 1) * 100 if total_s_prev else 0.0
-        )
+        delta_s = (total_s_real - total_s_prev)
 
         col_a.metric(
             "Gastos – Real (Ano)",
@@ -296,7 +297,7 @@ def main():
         col_c.metric(
             "Saldo – Real (Ano)",
             fmt_br(total_s_real),
-            delta=f"{delta_s:.1f}% vs Prev.",
+            delta=f"{fmt_br(delta_s)} vs Prev.",
         )
 
     # ----------------------------------------------------------------
@@ -322,7 +323,11 @@ def main():
         ]
 
     # Formatação
-    for c in ["Custos_Prev", "Custos_Real", "Receb_Prev", "Receb_Real", "Saldo_Prev", "Saldo_Real"]:
+    for c in [
+        "Custos_Prev", "Custos_Real",
+        "Receb_Prev", "Receb_Real",
+        "Saldo_Prev", "Saldo_Real",
+    ]:
         if c in tabela.columns:
             tabela[c] = tabela[c].map(fmt_br)
 
@@ -332,70 +337,6 @@ def main():
         )
 
     st.dataframe(tabela[cols], use_container_width=True, height=360)
-
-    # ----------------------------------------------------------------
-    # GRÁFICO DE SALDO (PREV x REAL)
-    # ----------------------------------------------------------------
-    st.markdown("---")
-    st.subheader("Evolução do saldo")
-
-    chart_data = resumo.copy()
-
-    if visao == "Planejado":
-        # Só saldo previsto
-        chart = (
-            alt.Chart(chart_data)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("MesRef:N", sort=MONTH_ORDER, title="Mês"),
-                y=alt.Y("Saldo_Prev:Q", title="Saldo"),
-                color=alt.value("#7da0ff"),
-                tooltip=["MesRef", "Saldo_Prev"],
-            )
-            .properties(height=320)
-        )
-
-    elif visao == "Realizado":
-        # Só saldo real
-        chart = (
-            alt.Chart(chart_data)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("MesRef:N", sort=MONTH_ORDER, title="Mês"),
-                y=alt.Y("Saldo_Real:Q", title="Saldo"),
-                color=alt.value("#1f77b4"),
-                tooltip=["MesRef", "Saldo_Real"],
-            )
-            .properties(height=320)
-        )
-
-    else:
-        # Plan & Real: duas linhas sobrepostas (sem transform_fold, para evitar erro)
-        line_prev = (
-            alt.Chart(chart_data)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("MesRef:N", sort=MONTH_ORDER, title="Mês"),
-                y=alt.Y("Saldo_Prev:Q", title="Saldo"),
-                color=alt.value("#7da0ff"),
-                tooltip=["MesRef", "Saldo_Prev"],
-            )
-        )
-
-        line_real = (
-            alt.Chart(chart_data)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("MesRef:N", sort=MONTH_ORDER, title="Mês"),
-                y=alt.Y("Saldo_Real:Q", title="Saldo"),
-                color=alt.value("#1f77b4"),
-                tooltip=["MesRef", "Saldo_Real"],
-            )
-        )
-
-        chart = (line_prev + line_real).properties(height=320)
-
-    st.altair_chart(chart, use_container_width=True)
 
 
 # --------------------------------------------------------------------
