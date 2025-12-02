@@ -369,6 +369,16 @@ def main():
 
     tabela = resumo.copy()
 
+    # Remove meses totalmente zerados (todas as métricas = 0), mantendo ordem cronológica
+    cols_val = [c for c in tabela.columns if c.startswith(("Custos_", "Receb_", "Saldo_"))]
+    if cols_val:
+        soma_abs = tabela[cols_val].abs().sum(axis=1)
+        tabela = tabela[soma_abs != 0].reset_index(drop=True)
+
+    # Garante precisão controlada na coluna de variação percentual
+    if "Var_Saldo_%" in tabela.columns:
+        tabela["Var_Saldo_%"] = pd.to_numeric(tabela["Var_Saldo_%"], errors="coerce").fillna(0).round(4)
+
     # Decide quais colunas exibir conforme a visão
     if visao == "Planejado":
         cols = ["MesRef", "Custos_Prev", "Receb_Prev", "Saldo_Prev"]
