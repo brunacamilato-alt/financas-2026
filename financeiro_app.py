@@ -3,6 +3,7 @@
 
 import pandas as pd
 import streamlit as st
+from datetime import date
 
 # --------------------------------------------------------------------
 # CONFIGURAÇÕES GERAIS
@@ -27,6 +28,24 @@ MONTH_ORDER = [
     "Mai/26", "Jun/26", "Jul/26", "Ago/26",
     "Set/26", "Out/26", "Nov/26", "Dez/26",
 ]
+
+MES_MAP = {
+    "Jan": 1, "Fev": 2, "Mar": 3, "Abr": 4,
+    "Mai": 5, "Jun": 6, "Jul": 7, "Ago": 8,
+    "Set": 9, "Out": 10, "Nov": 11, "Dez": 12,
+}
+
+
+def parse_mesref(mesref: str):
+    """Converte 'Jan/26' em (ano, mes) -> (2026, 1)."""
+    try:
+        parte_mes, parte_ano = mesref.split("/")
+        mes = MES_MAP.get(parte_mes[:3], 1)
+        ano = 2000 + int(parte_ano)
+        return ano, mes
+    except Exception:
+        return None, None
+
 
 # --------------------------------------------------------------------
 # FUNÇÕES AUXILIARES
@@ -134,17 +153,9 @@ def carregar_dados_long() -> pd.DataFrame:
     return df_longo
 
 
-def montar_resumo(df_longo: pd.DataFrame,
-                  pagadores: list,
-                  categorias: list) -> pd.DataFrame:
+def montar_resumo(df_longo: pd.DataFrame) -> pd.DataFrame:
     """Resumo mensal (custos, entradas, saldo)."""
     base = df_longo.copy()
-
-    if pagadores:
-        base = base[base["Pagador"].isin(pagadores)]
-
-    if categorias:
-        base = base[base["Categoria"].isin(categorias)]
 
     # Define custos (Natureza = 'Custo') e entradas (todo o resto)
     natureza_series = base["Natureza"].fillna("").str.lower()
@@ -227,81 +238,124 @@ def main():
     st.markdown("---")
     st.subheader("Filtros")
 
-    pagadores_disponiveis = sorted(df_long["Pagador"].dropna().unique())
-    pagadores_sel = st.multiselect(
+    # Pagador: radio igual à visão de valores
+    pagador = st.radio(
         "Pagador:",
-        options=pagadores_disponiveis,
-        default=pagadores_disponiveis,
-    )
-
-    categorias_disponiveis = sorted(df_long["Categoria"].dropna().unique())
-    categorias_sel = st.multiselect(
-        "Filtrar por categoria (opcional):",
-        options=categorias_disponiveis,
-        default=[],
-    )
-
-    visao = st.radio(
-        "Visão de valores:",
-        ["Plan & Real", "Planejado", "Realizado"],
+        ["Bruna", "Juliana", "Ambas"],
+        index=2,
         horizontal=True,
     )
 
-    resumo = montar_resumo(df_long, pagadores_sel, categorias_sel)
+    # Categoria: radio em 3 grupos
+    cat_choice = st.radio(
+        "Filtrar por categoria:",
+        ["Itens de Receitas e Saldos", "Itens de Custos", "Incluir todos os itens"],
+        index=2,
+        horizontal=True,
+    )
+
+    # Aplica filtros básicos sobre df_long
+    df_base = df_long.copy()
+
+    if pagador != "Ambas":
+        df_base = df_base[df_base["Pagador"] == pagador]
+
+    natureza_series_base = df_base["Natureza"].fillna("").str.lower()
+    if cat_choice == "Itens de Receitas e Saldos":
+        df_base = df_base[natureza_series_base != "custo"]
+    elif cat_choice == "Itens de Custos":
+        df_base = df_base[natureza_series_base == "custo"]
+    # "Incluir todos os itens" -> não filtra por natureza
+
+    # Visão de valores
+    visao = st.radio(
+        "Visão de valores:",
+        ["Planejado", "Realizado", "Ambos"],
+        index=0,
+        horizontal=True,
+    )
+
+    resumo = montar_resumo(df_base)
 
     if resumo.empty:
         st.warning("Nenhum dado encontrado para os filtros selecionados.")
         return
 
+    # Marca meses vencidos em relação à data de hoje
+    hoje = date.today()
+    anos_meses = resumo["MesRef"].map(parse_mesref)
+    resumo["Ano"], resumo["MesNum"] = zip(*anos_meses)
+
+    resumo["MesPassado"] = resumo.apply(
+        lambda r: (
+            r["Ano"] is not None
+            and r["MesNum"] is not None
+            and (r["Ano"] < hoje.year or (r["Ano"] == hoje.year and r["MesNum"] < hoje.month))
+        ),
+        axis=1,
+    )
+
     # ----------------------------------------------------------------
-    # RESUMO ANUAL (KPIs)
+    # RESUMO ANUAL (KPIs) – com mesma dimensão para Prev e Real
     # ----------------------------------------------------------------
     st.markdown("---")
     st.subheader("Resumo anual (após filtros)")
 
+    # Cópia para cálculo dos totais com lógica de "mês vencido"
+    resumo_kpi = resumo.copy()
+    resumo_kpi.loc[resumo_kpi["MesPassado"], ["Custos_Prev", "Receb_Prev", "Saldo_Prev"]] = 0.0
+
     # Totais
-    total_c_prev = resumo["Custos_Prev"].sum()
+    total_c_prev = resumo_kpi["Custos_Prev"].sum()
+    total_r_prev = resumo_kpi["Receb_Prev"].sum()
+    total_s_prev = resumo_kpi["Saldo_Prev"].sum()
+
     total_c_real = resumo["Custos_Real"].sum()
-    total_r_prev = resumo["Receb_Prev"].sum()
     total_r_real = resumo["Receb_Real"].sum()
-    total_s_prev = resumo["Saldo_Prev"].sum()
     total_s_real = resumo["Saldo_Real"].sum()
 
-    col_a, col_b, col_c = st.columns(3)
+    # Linha Planejado
+    if visao in ("Planejado", "Ambos"):
+        col_p1, col_p2, col_p3 = st.columns(3)
+        col_p1.metric("Gastos – Previsto (Ano)", fmt_br(total_c_prev))
+        col_p2.metric("Entradas – Previstas (Ano)", fmt_br(total_r_prev))
+        col_p3.metric("Saldo – Previsto (Ano)", fmt_br(total_s_prev))
 
-    if visao == "Planejado":
-        col_a.metric("Gastos – Previsto (Ano)", fmt_br(total_c_prev))
-        col_b.metric("Entradas – Previstas (Ano)", fmt_br(total_r_prev))
-        col_c.metric("Saldo – Previsto (Ano)", fmt_br(total_s_prev))
+    # Linha Realizado
+    if visao in ("Realizado", "Ambos"):
+        col_r1, col_r2, col_r3 = st.columns(3)
 
-    elif visao == "Realizado":
-        col_a.metric("Gastos – Real (Ano)", fmt_br(total_c_real))
-        col_b.metric("Entradas – Reais (Ano)", fmt_br(total_r_real))
-        col_c.metric("Saldo – Real (Ano)", fmt_br(total_s_real))
+        if visao == "Ambos":
+            delta_c = total_c_real - total_c_prev
+            delta_r = total_r_real - total_r_prev
+            delta_s = total_s_real - total_s_prev
 
-    else:
-        delta_c = total_c_real - total_c_prev
-        delta_r = total_r_real - total_r_prev
-        delta_s = (total_s_real - total_s_prev)
+            col_r1.metric(
+                "Gastos – Real (Ano)",
+                fmt_br(total_c_real),
+                delta=f"{fmt_br(delta_c)} vs Prev.",
+            )
+            col_r2.metric(
+                "Entradas – Reais (Ano)",
+                fmt_br(total_r_real),
+                delta=f"{fmt_br(delta_r)} vs Prev.",
+            )
+            col_r3.metric(
+                "Saldo – Real (Ano)",
+                fmt_br(total_s_real),
+                delta=f"{fmt_br(delta_s)} vs Prev.",
+            )
+        else:
+            col_r1.metric("Gastos – Real (Ano)", fmt_br(total_c_real))
+            col_r2.metric("Entradas – Reais (Ano)", fmt_br(total_r_real))
+            col_r3.metric("Saldo – Real (Ano)", fmt_br(total_s_real))
 
-        col_a.metric(
-            "Gastos – Real (Ano)",
-            fmt_br(total_c_real),
-            delta=f"{fmt_br(delta_c)} vs Prev.",
-        )
-        col_b.metric(
-            "Entradas – Reais (Ano)",
-            fmt_br(total_r_real),
-            delta=f"{fmt_br(delta_r)} vs Prev.",
-        )
-        col_c.metric(
-            "Saldo – Real (Ano)",
-            fmt_br(total_s_real),
-            delta=f"{fmt_br(delta_s)} vs Prev.",
-        )
+    st.caption(
+        "Obs: Nos meses já vencidos, o planejado é desconsiderado nos totais anuais para manter a visão Real + Forecast."
+    )
 
     # ----------------------------------------------------------------
-    # TABELA RESUMO MENSAL
+    # TABELA RESUMO MENSAL – com cores apenas nos saldos
     # ----------------------------------------------------------------
     st.markdown("---")
     st.subheader("Resumo mensal")
@@ -313,7 +367,7 @@ def main():
         cols = ["MesRef", "Custos_Prev", "Receb_Prev", "Saldo_Prev"]
     elif visao == "Realizado":
         cols = ["MesRef", "Custos_Real", "Receb_Real", "Saldo_Real"]
-    else:
+    else:  # Ambos
         cols = [
             "MesRef",
             "Custos_Prev", "Custos_Real",
@@ -322,21 +376,129 @@ def main():
             "Var_Saldo_%",
         ]
 
-    # Formatação
-    for c in [
-        "Custos_Prev", "Custos_Real",
-        "Receb_Prev", "Receb_Real",
-        "Saldo_Prev", "Saldo_Real",
-    ]:
-        if c in tabela.columns:
-            tabela[c] = tabela[c].map(fmt_br)
+    def color_saldo(v):
+        if pd.isna(v):
+            return ""
+        try:
+            v_float = float(v)
+        except Exception:
+            return ""
+        if v_float < 0:
+            return "background-color: #f8d0d0;"   # vermelho claro
+        elif v_float > 2000:
+            return "background-color: #d4f5d4;"   # verde
+        else:
+            return "background-color: #fff7cc;"   # amarelo
 
-    if "Var_Saldo_%" in tabela.columns:
-        tabela["Var_Saldo_%"] = tabela["Var_Saldo_%"].map(
-            lambda v: f"{v*100:.1f}%".replace(".", ",")
+    tabela_exib = tabela[cols].copy()
+
+    styler = tabela_exib.style
+
+    # Formatação de moeda
+    cols_moeda = [c for c in cols if c.startswith(("Custos_", "Receb_", "Saldo_"))]
+    if cols_moeda:
+        styler = styler.format({c: fmt_br for c in cols_moeda})
+
+    # Formatação de percentual
+    if "Var_Saldo_%" in cols:
+        styler = styler.format(
+            {"Var_Saldo_%": lambda v: f"{v * 100:.1f}%".replace(".", ",")}
         )
 
-    st.dataframe(tabela[cols], use_container_width=True, height=360)
+    # Aplica cores somente aos saldos
+    saldo_cols = [c for c in cols if c.startswith("Saldo_")]
+    if saldo_cols:
+        styler = styler.applymap(color_saldo, subset=saldo_cols)
+
+    st.dataframe(styler, use_container_width=True, height=360)
+
+    # ----------------------------------------------------------------
+    # RANKING DE CUSTOS (EVOLUÇÃO NO TEMPO) – após Resumo Mensal
+    # ----------------------------------------------------------------
+    st.subheader("Ranking de custos por categoria (evolução no tempo)")
+
+    base_rank = df_base.copy()
+    natureza_rank = base_rank["Natureza"].fillna("").str.lower()
+    base_rank = base_rank[natureza_rank == "custo"]
+
+    if base_rank.empty:
+        st.info("Nenhum custo encontrado para os filtros selecionados.")
+        return
+
+    # Agrega Prev / Real por categoria e mês
+    agr = (
+        base_rank
+        .groupby(["Categoria", "MesRef"])[["Prev", "Real"]]
+        .sum()
+        .reset_index()
+    )
+
+    # Marca meses passados
+    anos_meses_rank = agr["MesRef"].map(parse_mesref)
+    agr["Ano"], agr["MesNum"] = zip(*anos_meses_rank)
+    agr["MesPassado"] = agr.apply(
+        lambda r: (
+            r["Ano"] is not None
+            and r["MesNum"] is not None
+            and (r["Ano"] < hoje.year or (r["Ano"] == hoje.year and r["MesNum"] < hoje.month))
+        ),
+        axis=1,
+    )
+
+    # Zera Prev nos meses passados (Planejado e Ambos)
+    if visao in ("Planejado", "Ambos"):
+        agr.loc[agr["MesPassado"], "Prev"] = 0.0
+
+    # Garante ordem dos meses
+    meses_usados = [m for m in MONTH_ORDER if m in agr["MesRef"].unique()]
+
+    linhas = []
+    for cat in sorted(agr["Categoria"].dropna().unique()):
+        sub = agr[agr["Categoria"] == cat]
+        linha = {"Categoria": cat}
+
+        for mes in meses_usados:
+            rec = sub[sub["MesRef"] == mes]
+            prev_val = float(rec["Prev"].iloc[0]) if not rec.empty else 0.0
+            real_val = float(rec["Real"].iloc[0]) if not rec.empty else 0.0
+
+            if visao in ("Planejado", "Ambos"):
+                linha[f"{mes} Prev"] = prev_val
+            if visao in ("Realizado", "Ambos"):
+                linha[f"{mes} Real"] = real_val
+
+        # totais para ordenação
+        total_real = sum(
+            linha.get(f"{mes} Real", 0.0) for mes in meses_usados
+        )
+        total_prev = sum(
+            linha.get(f"{mes} Prev", 0.0) for mes in meses_usados
+        )
+        linha["_total_real"] = total_real
+        linha["_total_prev"] = total_prev
+
+        linhas.append(linha)
+
+    df_rank = pd.DataFrame(linhas)
+
+    if visao in ("Realizado", "Ambos"):
+        df_rank = df_rank.sort_values("_total_real", ascending=False)
+    else:  # Planejado
+        df_rank = df_rank.sort_values("_total_prev", ascending=False)
+
+    df_rank = df_rank.drop(columns=["_total_real", "_total_prev"], errors="ignore")
+
+    # Formatação do ranking
+    cols_rank = [c for c in df_rank.columns if c != "Categoria"]
+    fmt_rank = {c: fmt_br for c in cols_rank}
+    styler_rank = df_rank.style.format(fmt_rank)
+
+    st.dataframe(styler_rank, use_container_width=True)
+
+    st.caption(
+        "Obs: Ranking considera apenas categorias com Natureza = Custo, "
+        "ordenadas do maior para o menor custo anual."
+    )
 
 
 # --------------------------------------------------------------------
