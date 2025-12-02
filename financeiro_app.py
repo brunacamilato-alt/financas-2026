@@ -258,7 +258,8 @@ def main():
     df_base = df_long.copy()
 
     if pagador != "Ambas":
-        df_base = df_base[df_base["Pagador"] == pagador]
+        pag_series = df_base["Pagador"].fillna("").str.strip().str.lower()
+        df_base = df_base[pag_series == pagador.lower()]
 
     natureza_series_base = df_base["Natureza"].fillna("").str.lower()
     if cat_choice == "Itens de Receitas e Saldos":
@@ -416,6 +417,14 @@ def main():
     # RANKING DE CUSTOS (EVOLUÇÃO NO TEMPO) – após Resumo Mensal
     # ----------------------------------------------------------------
     st.subheader("Ranking de custos por categoria (evolução no tempo)")
+
+    visao = st.radio(
+        "Visão de valores (ranking):",
+        ["Planejado", "Realizado", "Ambos"],
+        index=0,
+        horizontal=True,
+        key="visao_ranking",
+    )
 
     base_rank = df_base.copy()
     natureza_rank = base_rank["Natureza"].fillna("").str.lower()
