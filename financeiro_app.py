@@ -369,11 +369,17 @@ def main():
 
     tabela = resumo.copy()
 
-    # Remove meses totalmente zerados (todas as métricas = 0), mantendo ordem cronológica
+    # Remove meses totalmente zerados (todas as métricas = 0)
     cols_val = [c for c in tabela.columns if c.startswith(("Custos_", "Receb_", "Saldo_"))]
     if cols_val:
         soma_abs = tabela[cols_val].abs().sum(axis=1)
         tabela = tabela[soma_abs != 0].reset_index(drop=True)
+
+    # Reordena meses de acordo com MONTH_ORDER
+    tabela["MesOrd"] = tabela["MesRef"].apply(
+        lambda x: MONTH_ORDER.index(x) if x in MONTH_ORDER else 99
+    )
+    tabela = tabela.sort_values("MesOrd").drop(columns=["MesOrd"])
 
     # Garante precisão controlada na coluna de variação percentual
     if "Var_Saldo_%" in tabela.columns:
@@ -395,10 +401,19 @@ def main():
     def color_saldo(v):
         if pd.isna(v):
             return ""
-        try:
+        # Aceita tanto números quanto strings formatadas (ex.: 'R$ 3.500,00')
+        if isinstance(v, (int, float)):
             v_float = float(v)
-        except Exception:
-            return ""
+        else:
+            s = str(v).strip()
+            s = s.replace("R$", "").replace(" ", "")
+            # Se usar padrão brasileiro (vírgula como decimal), trata adequadamente
+            if "," in s:
+                s = s.replace(".", "").replace(",", ".")
+            try:
+                v_float = float(s)
+            except Exception:
+                return ""
         if v_float < 0:
             return "background-color: #f8d0d0;"   # vermelho claro
         elif v_float > 2000:
@@ -407,18 +422,14 @@ def main():
             return "background-color: #fff7cc;"   # amarelo
 
     tabela_exib = tabela[cols].copy()
-    # Arredonda colunas monetárias para 2 casas decimais
+    # Converte colunas monetárias para string já formatada em moeda BR
     cols_moeda = [c for c in cols if c.startswith(("Custos_", "Receb_", "Saldo_"))]
     for c in cols_moeda:
         if c in tabela_exib.columns:
-            tabela_exib[c] = pd.to_numeric(tabela_exib[c], errors="coerce").fillna(0).round(2)
+            serie_num = pd.to_numeric(tabela_exib[c], errors="coerce").fillna(0).round(2)
+            tabela_exib[c] = serie_num.apply(fmt_br)
 
     styler = tabela_exib.style
-
-    # Formatação de moeda
-    cols_moeda = [c for c in cols if c.startswith(("Custos_", "Receb_", "Saldo_"))]
-    if cols_moeda:
-        styler = styler.format({c: fmt_br for c in cols_moeda})
 
     # Formatação de percentual
     if "Var_Saldo_%" in cols:
