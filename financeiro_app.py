@@ -422,6 +422,8 @@ def main():
             return "background-color: #fff7cc;"   # amarelo
 
     tabela_exib = tabela[cols].copy()
+    # Ajusta índice para contar meses de 1 a N (Jan=1, ..., Dez=N)
+    tabela_exib.index = range(1, len(tabela_exib) + 1)
     # Converte colunas monetárias para string já formatada em moeda BR
     cols_moeda = [c for c in cols if c.startswith(("Custos_", "Receb_", "Saldo_"))]
     for c in cols_moeda:
@@ -442,7 +444,7 @@ def main():
     if saldo_cols:
         styler = styler.applymap(color_saldo, subset=saldo_cols)
 
-    st.dataframe(styler, use_container_width=True, height=700)
+    st.dataframe(styler, use_container_width=True, height=520)
 
     # ----------------------------------------------------------------
     # RANKING DE CUSTOS (EVOLUÇÃO NO TEMPO) – após Resumo Mensal
