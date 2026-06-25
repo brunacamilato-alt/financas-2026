@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fluxo de Caixa Local</title>
+    <link rel="stylesheet" href="./styles.css?v=16" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Forecast de caixa</p>
+        <h1>Fluxo de Caixa Local</h1>
+      </div>
+      <div class="header-actions">
+        <button class="primary-button compact-button" id="refreshButton" type="button">
+          Atualizar
+        </button>
+        <button class="ghost-button" id="resetAppButton" type="button" title="Limpar dados salvos">
+          Limpar tudo
+        </button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="band summary-band" aria-label="Resumo">
+        <div class="metric metric-drill" data-drill-type="real">
+          <span>Caixa real hoje</span>
+          <strong id="metricBase">R$ 0,00</strong>
+          <button type="button">Ver detalhes</button>
+        </div>
+        <div class="metric metric-drill" data-drill-type="receivable">
+          <span>A receber</span>
+          <strong id="metric30">R$ 0,00</strong>
+          <button type="button">Ver detalhes</button>
+        </div>
+        <div class="metric metric-drill" data-drill-type="payable">
+          <span>A pagar</span>
+          <strong id="metricLow">R$ 0,00</strong>
+          <button type="button">Ver detalhes</button>
+        </div>
+        <div class="metric metric-drill" data-drill-type="all">
+          <span>Caixa provavel</span>
+          <strong id="metricProbable">R$ 0,00</strong>
+          <button type="button">Ver composicao</button>
+        </div>
+        <div class="metric metric-drill" data-drill-type="investment">
+          <span>Investimento Jan/27</span>
+          <strong id="metricInvestment">R$ 0,00</strong>
+          <button type="button">Ver detalhes</button>
+        </div>
+        <div class="metric metric-drill" data-drill-type="investment">
+          <span>Sobra apos Jan/27</span>
+          <strong id="metricRunway">12+ meses</strong>
+          <button type="button">Ver impacto</button>
+        </div>
+      </section>
+
+      <section class="band dashboard-band" aria-label="Saude do caixa">
+        <div class="panel dashboard-panel">
+          <div class="dashboard-copy">
+            <span id="healthStatus" class="health-status">Calculando</span>
+            <h2>Saude do caixa</h2>
+            <p id="healthText">Cadastre receitas e despesas para ver a leitura de caixa.</p>
+          </div>
+          <div class="year-chart-card">
+            <div class="panel-heading compact-heading">
+              <div>
+                <h2>Conta do saldo</h2>
+                <p id="annualSubtitle">Caixa real + a receber - a pagar - investimento = sobra.</p>
+              </div>
+            </div>
+            <div class="chart-legend" id="bridgeLegend"></div>
+            <div id="annualChart" class="annual-chart"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="band account-band" aria-label="Caixa por banco">
+        <div class="panel account-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Caixa por banco</h2>
+              <p id="bankBalanceHint">Santander, C6 e Banco do Brasil separados por origem.</p>
+            </div>
+          </div>
+          <div id="bankBalanceCards" class="bank-balance-grid"></div>
+        </div>
+      </section>
+
+      <section class="band drill-band" aria-label="Drill down de caixa">
+        <div class="panel drill-panel">
+          <div class="panel-heading drill-heading">
+            <div>
+              <h2>Drill-down</h2>
+              <p id="drillSubtitle">Clique em uma aba para abrir as transacoes por tipo.</p>
+            </div>
+            <div class="drill-tabs" aria-label="Abas de analise">
+              <button class="tab-button active" type="button" data-drill-type="all">Todos</button>
+              <button class="tab-button" type="button" data-drill-type="real">Caixa real</button>
+              <button class="tab-button" type="button" data-drill-type="receivable">A receber</button>
+              <button class="tab-button" type="button" data-drill-type="payable">A pagar</button>
+              <button class="tab-button" type="button" data-drill-type="investment">Investimento</button>
+            </div>
+          </div>
+
+          <div class="field-grid analysis-filters">
+            <label>
+              Buscar
+              <input id="drillSearchInput" type="search" placeholder="Cliente, compromisso, descricao" />
+            </label>
+            <label>
+              Valor minimo
+              <input id="drillMinInput" type="number" step="0.01" min="0" inputmode="decimal" />
+            </label>
+            <label>
+              Valor maximo
+              <input id="drillMaxInput" type="number" step="0.01" min="0" inputmode="decimal" />
+            </label>
+            <label>
+              Origem
+              <select id="drillSourceInput">
+                <option value="all">Tudo</option>
+                <option value="manual">Manual</option>
+                <option value="imported">Arquivo</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="drill-total" id="drillTotal">0 transacoes - R$ 0,00</div>
+          <div class="table-wrap compact drill-table-wrap">
+            <table class="drill-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Data</th>
+                  <th>Grupo</th>
+                  <th>Descricao</th>
+                  <th>Pessoa/Empresa</th>
+                  <th>Conta/Origem</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                  <th>Opcoes</th>
+                </tr>
+              </thead>
+              <tbody id="drillRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="band controls-band" aria-label="Controles principais">
+        <div class="panel upload-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Extrato</h2>
+              <p>Importe outro XLSX ou CSV. A carga base da aplicacao entra automaticamente.</p>
+            </div>
+            <button class="ghost-button" id="clearImportedButton" type="button">Limpar extrato</button>
+          </div>
+          <label class="drop-zone" for="statementFile">
+            <input id="statementFile" type="file" accept=".xlsx,.csv,.txt" />
+            <span>Selecionar arquivo</span>
+            <small id="importStatus">Nenhum arquivo carregado.</small>
+          </label>
+          <input id="backupFile" class="backup-file-input" type="file" accept=".json,application/json" />
+          <div class="backup-actions" aria-label="Backup local">
+            <button class="ghost-button" id="exportBackupButton" type="button">Exportar backup</button>
+            <button class="ghost-button" id="importBackupButton" type="button">Importar backup</button>
+          </div>
+          <p class="backup-note">Os dados ficam salvos neste navegador/dispositivo. Exporte backup periodicamente para evitar perda.</p>
+          <p id="backupMeta" class="backup-meta"></p>
+          <div class="field-grid">
+            <label>
+              Saldo base
+              <input id="baseBalanceInput" type="number" step="0.01" inputmode="decimal" />
+            </label>
+            <label>
+              Data base
+              <input id="baseDateInput" type="date" />
+            </label>
+            <label>
+              Horizonte
+              <select id="horizonInput">
+                <option value="3">3 meses</option>
+                <option value="6">6 meses</option>
+                <option value="12">12 meses</option>
+                <option value="18">18 meses</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel future-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Lancamento</h2>
+              <p id="entryFormHint">Registre entrada, saida ou provisao.</p>
+            </div>
+          </div>
+          <form id="futureForm" class="future-form">
+            <label>
+              Data
+              <input name="date" type="date" required />
+            </label>
+            <label>
+              Tipo
+              <select name="type" required>
+                <option value="credit">Receita</option>
+                <option value="debit">Despesa</option>
+                <option value="provision_credit">Provisao receita</option>
+                <option value="provision_debit">Provisao debito</option>
+                <option value="investment">Investimento/Aporte</option>
+                <option value="investment_outflow">Retirada investimento Jan/2027</option>
+                <option value="loan">Emprestimo de terceiros</option>
+                <option value="loan_payment">Pagamento de emprestimo</option>
+              </select>
+            </label>
+            <label class="wide-field">
+              Descricao
+              <input name="description" type="text" placeholder="Ex.: fornecedor, boleto, cliente" required />
+            </label>
+            <label>
+              Cliente / fornecedor
+              <input name="client" type="text" placeholder="Nome da pessoa ou empresa" />
+            </label>
+            <label>
+              No cotacao / pedido
+              <input name="quoteNumber" type="text" placeholder="Opcional" />
+            </label>
+            <label>
+              Compromisso
+              <input name="commitment" type="text" placeholder="Ex.: DAS, aluguel, compra" />
+            </label>
+            <label>
+              Status
+              <select name="status">
+                <option value="Previsto">Previsto</option>
+                <option value="Confirmado">Confirmado</option>
+                <option value="Realizado">Realizado</option>
+                <option value="Atrasado">Atrasado</option>
+                <option value="Cancelado">Cancelado</option>
+              </select>
+            </label>
+            <label>
+              Valor
+              <input name="amount" type="text" inputmode="decimal" placeholder="Ex.: 1234,56" required />
+            </label>
+            <label>
+              Conta / origem
+              <input name="account" type="text" placeholder="Ex.: Santander" />
+            </label>
+            <label>
+              Categoria
+              <input name="category" type="text" placeholder="Opcional" />
+            </label>
+            <div class="form-actions">
+              <button class="primary-button" id="submitEntryButton" type="submit">Adicionar</button>
+              <button class="ghost-button hidden" id="cancelEditButton" type="button">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="band manual-band" aria-label="Lancamentos manuais">
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Lancamentos manuais</h2>
+              <p>Itens salvos neste navegador. Use para provisoes, receitas futuras e ajustes.</p>
+            </div>
+            <button class="ghost-button" id="clearFuturesButton" type="button">Limpar lancamentos</button>
+          </div>
+          <div class="table-wrap compact">
+            <table class="manual-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Data</th>
+                  <th>Grupo</th>
+                  <th>Descricao</th>
+                  <th>Pessoa/Empresa</th>
+                  <th>Conta/Origem</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                  <th>Opcoes</th>
+                </tr>
+              </thead>
+              <tbody id="futureRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="band forecast-band" aria-label="Forecast">
+        <div class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Saldo projetado</h2>
+              <p>Fechamento estimado por mes.</p>
+            </div>
+          </div>
+          <div id="forecastChart" class="forecast-chart"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Forecast mensal</h2>
+              <p>Entradas, saidas e saldo final.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mes</th>
+                  <th>Entradas</th>
+                  <th>Saidas</th>
+                  <th>Saldo final</th>
+                </tr>
+              </thead>
+              <tbody id="forecastRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="band lists-band" aria-label="Lancamentos importados">
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Importados</h2>
+              <p>Edite ou exclua lancamentos lidos do arquivo.</p>
+            </div>
+          </div>
+          <div class="table-wrap compact">
+            <table class="imported-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Data</th>
+                  <th>Grupo</th>
+                  <th>Descricao</th>
+                  <th>Pessoa/Empresa</th>
+                  <th>Conta/Origem</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                  <th>Opcoes</th>
+                </tr>
+              </thead>
+              <tbody id="importedRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js?v=23"></script>
+  </body>
+</html>
